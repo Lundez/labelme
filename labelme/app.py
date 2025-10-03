@@ -1707,7 +1707,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.imageData:
                 self.imagePath = filename
             self.labelFile = None
-        assert self.imageData is not None
+        if self.imageData is None:
+            self.errorMessage(
+                self.tr("Error opening file"),
+                self.tr("Failed to load image: <b>%s</b>") % filename,
+            )
+            return False
         image = QtGui.QImage.fromData(self.imageData)
 
         if image.isNull():
