@@ -8,6 +8,7 @@ import os.path as osp
 import re
 import types
 import webbrowser
+from urllib.parse import urlparse
 
 import imgviz
 import natsort
@@ -49,6 +50,44 @@ from . import utils
 LABEL_COLORMAP: NDArray[np.uint8] = imgviz.label_colormap()
 
 
+def _get_label_file_for_path(image_path: str, output_dir: str | None = None) -> str:
+    """Get the label file path for an image path (local or URL).
+    
+    For URLs, creates a filename by replacing path separators with underscores
+    to ensure the filename is filesystem-safe.
+    
+    Args:
+        image_path: Path to image file or URL
+        output_dir: Optional output directory for label files
+        
+    Returns:
+        Path to the label file
+    """
+    if utils.is_url(image_path):
+        # For URLs, create a safe filename from the URL path
+        parsed = urlparse(image_path)
+        # Remove leading/trailing slashes and replace remaining slashes with underscores
+        safe_name = parsed.path.strip('/').replace('/', '_')
+        if not safe_name:
+            # If path is empty, use host
+            safe_name = parsed.netloc.replace('.', '_')
+        # Remove file extension if present and add .json
+        safe_name = osp.splitext(safe_name)[0] + '.json'
+        
+        if output_dir:
+            return osp.join(output_dir, safe_name)
+        else:
+            # Use current directory for URL-based labels
+            return safe_name
+    else:
+        # For local files, use the traditional approach
+        label_file = f"{osp.splitext(image_path)[0]}.json"
+        if output_dir:
+            label_file_without_path = osp.basename(label_file)
+            label_file = osp.join(output_dir, label_file_without_path)
+        return label_file
+
+
 class MainWindow(QtWidgets.QMainWindow):
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = 0, 1, 2
 
@@ -64,6 +103,7 @@ class MainWindow(QtWidgets.QMainWindow):
         output=None,
         output_file=None,
         output_dir=None,
+        url_file=None,
     ):
         if output is not None:
             logger.warning("argument output is deprecated, use output_file instead")
@@ -864,7 +904,9 @@ class MainWindow(QtWidgets.QMainWindow):
             Qt.Vertical: {},
         }  # key=filename, value=scroll_value
 
-        if filename is not None and osp.isdir(filename):
+        if url_file is not None:
+            self.importUrlsFromFile(url_file)
+        elif filename is not None and osp.isdir(filename):
             self.importDirImages(filename, load=False)
         else:
             self.filename = filename
@@ -890,7 +932,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.updateFileMenu()
         # Since loading the file may take some time,
         # make sure it runs in the background.
-        if self.filename is not None:
+        if self.filename is not None and url_file is None:
             self.queueEvent(functools.partial(self.loadFile, self.filename))
 
         # Callbacks:
@@ -949,10 +991,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self._config["auto_save"] or self.actions.saveAuto.isChecked():
             assert self.imagePath
-            label_file = f"{osp.splitext(self.imagePath)[0]}.json"
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = osp.join(self.output_dir, label_file_without_path)
+            # Use helper function to get label file path (handles URLs properly)
+            label_file = _get_label_file_for_path(self.imagePath, self.output_dir)
             self.saveLabels(label_file)
             return
         self.dirty = True
@@ -1436,7 +1476,15 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             assert self.imagePath
             imagePath = osp.relpath(self.imagePath, osp.dirname(filename))
-            imageData = self.imageData if self._config["store_data"] else None
+            # Don't store imageData for URLs - only store imagePath
+            # For local files, respect the store_data config
+            is_url = utils.is_url(self.imagePath)
+            if is_url:
+                # For URLs, always use the full URL as imagePath and never store imageData
+                imagePath = self.imagePath
+                imageData = None
+            else:
+                imageData = self.imageData if self._config["store_data"] else None
             if osp.dirname(filename) and not osp.exists(osp.dirname(filename)):
                 os.makedirs(osp.dirname(filename))
             lf.save(
@@ -1663,7 +1711,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if filename is None:
             filename = self.settings.value("filename", "")
         filename = str(filename)
-        if not QtCore.QFile.exists(filename):
+        
+        # Check if filename is a URL - if so, skip file existence check
+        is_url = utils.is_url(filename)
+        if not is_url and not QtCore.QFile.exists(filename):
             self.errorMessage(
                 self.tr("Error opening file"),
                 self.tr("No such file: <b>%s</b>") % filename,
@@ -1671,10 +1722,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         # assumes same name, but json extension
         self.status(str(self.tr("Loading %s...")) % osp.basename(str(filename)))
-        label_file = f"{osp.splitext(filename)[0]}.json"
-        if self.output_dir:
-            label_file_without_path = osp.basename(label_file)
-            label_file = osp.join(self.output_dir, label_file_without_path)
+        
+        # Use helper function to get label file path (handles URLs properly)
+        label_file = _get_label_file_for_path(filename, self.output_dir)
+        
         if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file):
             try:
                 self.labelFile = LabelFile(label_file)
@@ -1691,17 +1742,29 @@ class MainWindow(QtWidgets.QMainWindow):
             assert self.labelFile is not None
             self.imageData = self.labelFile.imageData
             assert self.labelFile.imagePath
-            self.imagePath = osp.join(
-                osp.dirname(label_file),
-                self.labelFile.imagePath,
-            )
+            # If imagePath is a URL, use it directly; otherwise make it absolute
+            if utils.is_url(self.labelFile.imagePath):
+                self.imagePath = self.labelFile.imagePath
+                # For URLs, imageData is not stored in JSON, so load it now
+                if self.imageData is None:
+                    self.imageData = LabelFile.load_image_file(self.imagePath)
+            else:
+                self.imagePath = osp.join(
+                    osp.dirname(label_file),
+                    self.labelFile.imagePath,
+                )
             self.otherData = self.labelFile.otherData
         else:
             self.imageData = LabelFile.load_image_file(filename)
             if self.imageData:
                 self.imagePath = filename
             self.labelFile = None
-        assert self.imageData is not None
+        if self.imageData is None:
+            self.errorMessage(
+                self.tr("Error opening file"),
+                self.tr("Failed to load image: <b>%s</b>") % filename,
+            )
+            return False
         image = QtGui.QImage.fromData(self.imageData)
 
         if image.isNull():
@@ -2009,7 +2072,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.filename.lower().endswith(".json"):
             label_file = self.filename
         else:
-            label_file = f"{osp.splitext(self.filename)[0]}.json"
+            label_file = _get_label_file_for_path(self.filename, self.output_dir)
 
         return label_file
 
@@ -2220,3 +2283,43 @@ class MainWindow(QtWidgets.QMainWindow):
                     images.append(relativePath)
         images = natsort.os_sorted(images)
         return images
+
+    def importUrlsFromFile(self, url_file_path):
+        """Import a list of URLs from a text file.
+        
+        Each line in the file should contain a single URL.
+        """
+        self.actions.openNextImg.setEnabled(True)
+        self.actions.openPrevImg.setEnabled(True)
+
+        if not self.mayContinue() or not url_file_path:
+            return
+
+        self.filename = None
+        self.fileListWidget.clear()
+
+        try:
+            with open(url_file_path, 'r') as f:
+                urls = [line.strip() for line in f if line.strip() and utils.is_url(line.strip())]
+        except Exception as e:
+            self.errorMessage(
+                self.tr("Error opening URL file"),
+                self.tr("Failed to read URL file: <b>%s</b><br/>Error: %s") % (url_file_path, str(e)),
+            )
+            return
+
+        for url in urls:
+            # For URLs, we can't pre-check if a label file exists
+            # since they're remote resources
+            item = QtWidgets.QListWidgetItem(url)
+            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            item.setCheckState(Qt.Unchecked)
+            self.fileListWidget.addItem(item)
+
+        if len(urls) > 0:
+            self.openNextImg(load=True)
+        else:
+            self.errorMessage(
+                self.tr("No URLs found"),
+                self.tr("No valid URLs found in file: <b>%s</b>") % url_file_path,
+            )

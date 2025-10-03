@@ -107,6 +107,11 @@ def main():
     )
     parser.add_argument("filename", nargs="?", help="image or label filename")
     parser.add_argument(
+        "--url-file",
+        dest="url_file",
+        help="text file containing a list of image URLs (one per line)",
+    )
+    parser.add_argument(
         "--output",
         "-O",
         "-o",
@@ -216,6 +221,7 @@ def main():
     reset_config = config_from_args.pop("reset_config")
     filename = config_from_args.pop("filename")
     output = config_from_args.pop("output")
+    url_file = config_from_args.pop("url_file")
     config_file_or_yaml = config_from_args.pop("config")
     config = get_config(config_file_or_yaml, config_from_args)
 
@@ -249,6 +255,7 @@ def main():
         filename=filename,
         output_file=output_file,
         output_dir=output_dir,
+        url_file=url_file,
     )
 
     if reset_config:

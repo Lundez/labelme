@@ -1,0 +1,2 @@
+https://raw.githubusercontent.com/wkentaro/labelme/main/examples/instance_segmentation/data_dataset_voc/JPEGImages/2011_000003.jpg
+https://raw.githubusercontent.com/wkentaro/labelme/main/examples/instance_segmentation/data_dataset_voc/JPEGImages/2011_000006.jpg
