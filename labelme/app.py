@@ -64,6 +64,7 @@ class MainWindow(QtWidgets.QMainWindow):
         output=None,
         output_file=None,
         output_dir=None,
+        url_file=None,
     ):
         if output is not None:
             logger.warning("argument output is deprecated, use output_file instead")
@@ -864,7 +865,9 @@ class MainWindow(QtWidgets.QMainWindow):
             Qt.Vertical: {},
         }  # key=filename, value=scroll_value
 
-        if filename is not None and osp.isdir(filename):
+        if url_file is not None:
+            self.importUrlsFromFile(url_file)
+        elif filename is not None and osp.isdir(filename):
             self.importDirImages(filename, load=False)
         else:
             self.filename = filename
@@ -890,7 +893,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.updateFileMenu()
         # Since loading the file may take some time,
         # make sure it runs in the background.
-        if self.filename is not None:
+        if self.filename is not None and url_file is None:
             self.queueEvent(functools.partial(self.loadFile, self.filename))
 
         # Callbacks:
@@ -1663,7 +1666,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if filename is None:
             filename = self.settings.value("filename", "")
         filename = str(filename)
-        if not QtCore.QFile.exists(filename):
+        
+        # Check if filename is a URL - if so, skip file existence check
+        is_url = utils.is_url(filename)
+        if not is_url and not QtCore.QFile.exists(filename):
             self.errorMessage(
                 self.tr("Error opening file"),
                 self.tr("No such file: <b>%s</b>") % filename,
@@ -2220,3 +2226,43 @@ class MainWindow(QtWidgets.QMainWindow):
                     images.append(relativePath)
         images = natsort.os_sorted(images)
         return images
+
+    def importUrlsFromFile(self, url_file_path):
+        """Import a list of URLs from a text file.
+        
+        Each line in the file should contain a single URL.
+        """
+        self.actions.openNextImg.setEnabled(True)
+        self.actions.openPrevImg.setEnabled(True)
+
+        if not self.mayContinue() or not url_file_path:
+            return
+
+        self.filename = None
+        self.fileListWidget.clear()
+
+        try:
+            with open(url_file_path, 'r') as f:
+                urls = [line.strip() for line in f if line.strip() and utils.is_url(line.strip())]
+        except Exception as e:
+            self.errorMessage(
+                self.tr("Error opening URL file"),
+                self.tr("Failed to read URL file: <b>%s</b><br/>Error: %s") % (url_file_path, str(e)),
+            )
+            return
+
+        for url in urls:
+            # For URLs, we can't pre-check if a label file exists
+            # since they're remote resources
+            item = QtWidgets.QListWidgetItem(url)
+            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            item.setCheckState(Qt.Unchecked)
+            self.fileListWidget.addItem(item)
+
+        if len(urls) > 0:
+            self.openNextImg(load=True)
+        else:
+            self.errorMessage(
+                self.tr("No URLs found"),
+                self.tr("No valid URLs found in file: <b>%s</b>") % url_file_path,
+            )

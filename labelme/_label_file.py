@@ -139,11 +139,24 @@ class LabelFile:
 
     @staticmethod
     def load_image_file(filename):
-        try:
-            image_pil = PIL.Image.open(filename)
-        except OSError:
-            logger.error(f"Failed opening image file: {filename}")
-            return
+        # Check if filename is a URL
+        if utils.is_url(filename):
+            image_data = utils.download_image_from_url(filename)
+            if image_data is None:
+                logger.error(f"Failed downloading image from URL: {filename}")
+                return None
+            
+            try:
+                image_pil = PIL.Image.open(io.BytesIO(image_data))
+            except OSError:
+                logger.error(f"Failed opening image from URL: {filename}")
+                return None
+        else:
+            try:
+                image_pil = PIL.Image.open(filename)
+            except OSError:
+                logger.error(f"Failed opening image file: {filename}")
+                return
 
         # apply orientation to image according to exif
         image_pil = utils.apply_exif_orientation(image_pil)
