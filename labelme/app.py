@@ -991,10 +991,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self._config["auto_save"] or self.actions.saveAuto.isChecked():
             assert self.imagePath
-            label_file = f"{osp.splitext(self.imagePath)[0]}.json"
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = osp.join(self.output_dir, label_file_without_path)
+            # Use helper function to get label file path (handles URLs properly)
+            label_file = _get_label_file_for_path(self.imagePath, self.output_dir)
             self.saveLabels(label_file)
             return
         self.dirty = True
