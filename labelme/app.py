@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import functools
-import hashlib
 import html
 import math
 import os
@@ -54,8 +53,8 @@ LABEL_COLORMAP: NDArray[np.uint8] = imgviz.label_colormap()
 def _get_label_file_for_path(image_path: str, output_dir: str | None = None) -> str:
     """Get the label file path for an image path (local or URL).
     
-    For URLs, creates a unique filename using a hash to avoid collisions
-    and ensure the filename is filesystem-safe.
+    For URLs, creates a filename by replacing path separators with underscores
+    to ensure the filename is filesystem-safe.
     
     Args:
         image_path: Path to image file or URL
@@ -65,18 +64,21 @@ def _get_label_file_for_path(image_path: str, output_dir: str | None = None) -> 
         Path to the label file
     """
     if utils.is_url(image_path):
-        # For URLs, create a safe filename using hash
-        url_hash = hashlib.md5(image_path.encode()).hexdigest()[:16]
+        # For URLs, create a safe filename from the URL path
         parsed = urlparse(image_path)
-        original_name = osp.basename(parsed.path)
-        base_name = osp.splitext(original_name)[0] if original_name else "image"
-        label_filename = f"{base_name}_{url_hash}.json"
+        # Remove leading/trailing slashes and replace remaining slashes with underscores
+        safe_name = parsed.path.strip('/').replace('/', '_')
+        if not safe_name:
+            # If path is empty, use host
+            safe_name = parsed.netloc.replace('.', '_')
+        # Remove file extension if present and add .json
+        safe_name = osp.splitext(safe_name)[0] + '.json'
         
         if output_dir:
-            return osp.join(output_dir, label_filename)
+            return osp.join(output_dir, safe_name)
         else:
             # Use current directory for URL-based labels
-            return label_filename
+            return safe_name
     else:
         # For local files, use the traditional approach
         label_file = f"{osp.splitext(image_path)[0]}.json"
@@ -1742,10 +1744,17 @@ class MainWindow(QtWidgets.QMainWindow):
             assert self.labelFile is not None
             self.imageData = self.labelFile.imageData
             assert self.labelFile.imagePath
-            self.imagePath = osp.join(
-                osp.dirname(label_file),
-                self.labelFile.imagePath,
-            )
+            # If imagePath is a URL, use it directly; otherwise make it absolute
+            if utils.is_url(self.labelFile.imagePath):
+                self.imagePath = self.labelFile.imagePath
+                # For URLs, imageData is not stored in JSON, so load it now
+                if self.imageData is None:
+                    self.imageData = LabelFile.load_image_file(self.imagePath)
+            else:
+                self.imagePath = osp.join(
+                    osp.dirname(label_file),
+                    self.labelFile.imagePath,
+                )
             self.otherData = self.labelFile.otherData
         else:
             self.imageData = LabelFile.load_image_file(filename)

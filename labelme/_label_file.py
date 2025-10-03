@@ -189,7 +189,11 @@ class LabelFile:
                 imageData = base64.b64decode(data["imageData"])
             else:
                 # relative path from label file to relative path from cwd
-                imagePath = osp.join(osp.dirname(filename), data["imagePath"])
+                # But if imagePath is a URL, use it directly
+                if utils.is_url(data["imagePath"]):
+                    imagePath = data["imagePath"]
+                else:
+                    imagePath = osp.join(osp.dirname(filename), data["imagePath"])
                 imageData = self.load_image_file(imagePath)
             flags = data.get("flags") or {}
             imagePath = data["imagePath"]
